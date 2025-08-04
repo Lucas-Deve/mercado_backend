@@ -7,55 +7,47 @@ const db = require('./db');
 app.use(cors());
 app.use(express.json());
 
-// Rotas GET //
-// Rota principal para testar se está rodando
-// Rota que lista todos os produtos - deve vir primeiro
-app.get('/produtos', (req, res) => {
-  const produtos = db.prepare('SELECT * FROM produtos').all();
-  res.json(produtos);
-});
+// ===== ROTAS GET =====
 
-// Rota que busca um produto pelo código - deve vir depois
-app.get('/produtos/:codigo', (req, res) => {
-  const codigo = req.params.codigo;
-
-  const produto = db.prepare('SELECT * FROM produtos WHERE codigo = ?').get(codigo);
-
-  if (!produto) {
-    return res.status(404).json({ mensagem: 'Produto não encontrado' });
-  }
-
-  res.json(produto);
-});
+// Rota que lista produtos, com filtro opcional por lista de códigos
 app.get('/produtos', (req, res) => {
   const { codigos } = req.query;
 
   if (codigos) {
     const lista = codigos.split(",").map(c => c.trim());
     const placeholders = lista.map(() => '?').join(',');
-    const produtos = db.prepare(`SELECT * FROM produtos WHERE codigo IN (${placeholders})`).all(...lista);
+    const produtos = db.prepare(`SELECT * FROM produtos WHERE codigo IN (${placeholders})`).all(lista);
     return res.json(produtos);
   }
 
-  // Busca geral
+  // Busca geral, sem filtro
   const produtos = db.prepare('SELECT * FROM produtos').all();
   res.json(produtos);
 });
 
+// Rota que busca um produto pelo código
+app.get('/produtos/:codigo', (req, res) => {
+  const codigo = req.params.codigo;
+  const produto = db.prepare('SELECT * FROM produtos WHERE codigo = ?').get(codigo);
+
+  if (!produto) {
+    return res.status(404).json({ mensagem: 'Produto não encontrado' });
+  }
+  res.json(produto);
+});
+
+// Rota que busca vendas (filtrando por período opcional)
 app.get('/vendas', (req, res) => {
   const { inicio, fim } = req.query;
 
   try {
     let vendas;
-
     if (inicio && fim) {
-      // Filtra vendas entre inicio e fim (inclusive)
       vendas = db.prepare(`
         SELECT * FROM vendas WHERE data BETWEEN ? AND ? ORDER BY data ASC
       `).all(inicio, fim);
     } else {
-      // Se não informar período, retorna vendas do dia atual
-      const dataAtual = new Date().toISOString().split('T')[0]; // yyyy-mm-dd
+      const dataAtual = new Date().toISOString().split('T')[0];
       vendas = db.prepare('SELECT * FROM vendas WHERE data = ?').all(dataAtual);
     }
 
@@ -70,12 +62,14 @@ app.get('/vendas', (req, res) => {
     res.status(500).json({ mensagem: 'Erro ao buscar vendas' });
   }
 });
+
+// Rota para total de lucro e vendas em período opcional
 app.get('/lucro-vendas', (req, res) => {
   const { inicio, fim } = req.query;
 
   try {
     let query = `
-      SELECT 
+      SELECT
         COALESCE(SUM(v.total), 0) AS totalVendas,
         COALESCE(SUM(vi.lucro_total), 0) AS totalLucro
       FROM vendas v
@@ -100,6 +94,7 @@ app.get('/lucro-vendas', (req, res) => {
   }
 });
 
+// Rota para total do estoque
 app.get('/total-estoque', (req, res) => {
   try {
     const result = db.prepare(`
@@ -124,9 +119,8 @@ app.get('/usuarios', (req, res) => {
   }
 });
 
-//Fim das Rotas Get///
+// ===== ROTAS POST =====
 
-// Rota POST //
 app.post('/produtos', (req, res) => {
   const { codigo, nome, preco, estoque, valorVenda, lucro } = req.body;
 
@@ -134,9 +128,7 @@ app.post('/produtos', (req, res) => {
     return res.status(400).json({ mensagem: 'Campos obrigatórios não enviados' });
   }
 
-  // 👉 Verifica se o código já existe
   const produtoExistente = db.prepare('SELECT * FROM produtos WHERE codigo = ?').get(codigo);
-
   if (produtoExistente) {
     return res.status(400).json({ mensagem: 'Já existe um produto com esse código.' });
   }
@@ -151,7 +143,6 @@ app.post('/produtos', (req, res) => {
     res.status(500).json({ mensagem: 'Erro ao adicionar produto' });
   }
 });
-
 
 app.post('/conferir-inventario', (req, res) => {
   const { produtos } = req.body;
@@ -192,6 +183,7 @@ app.post('/ajustar-inventario', (req, res) => {
     res.status(500).json({ mensagem: 'Erro ao ajustar inventário' });
   }
 });
+
 app.post('/ajustar-estoque', (req, res) => {
   const { itens } = req.body;
 
@@ -232,15 +224,13 @@ app.post('/vendas', (req, res) => {
     return res.status(400).json({ mensagem: 'Dados da venda inválidos' });
   }
 
-  const dataAtual = new Date().toISOString().split('T')[0]; // yyyy-mm-dd
+  const dataAtual = new Date().toISOString().split('T')[0];
 
   const dbTransaction = db.transaction(() => {
-    // Salva a venda
     const vendaStmt = db.prepare('INSERT INTO vendas (data, total) VALUES (?, ?)');
     const vendaResult = vendaStmt.run(dataAtual, total);
     const vendaId = vendaResult.lastInsertRowid;
 
-    // Salva os itens
     const itemStmt = db.prepare(`
       INSERT INTO venda_itens (venda_id, codigo, quantidade, valor, subtotal, lucro_unitario, lucro_total)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -286,7 +276,6 @@ app.post('/usuarios', (req, res) => {
     return res.status(400).json({ mensagem: 'Preencha todos os campos' });
   }
 
-  // Verifica se o usuário já existe
   const usuarioExistente = db.prepare('SELECT * FROM usuarios WHERE nome = ?').get(nome);
   if (usuarioExistente) {
     return res.status(400).json({ mensagem: 'Usuário já existe' });
@@ -301,7 +290,7 @@ app.post('/usuarios', (req, res) => {
   }
 });
 
-//Verificação de login// 
+// Verificação de login
 app.post('/login', (req, res) => {
   const { nome, senha } = req.body;
 
@@ -318,10 +307,7 @@ app.post('/login', (req, res) => {
   res.json({ mensagem: 'Login bem-sucedido', tipo: usuario.tipo });
 });
 
-
-// Fim da Rota Post //
-
-// Inicio da Rota PUT //
+// ===== ROTAS PUT =====
 app.put('/produtos/:codigo', (req, res) => {
   const codigo = req.params.codigo;
   const { nome, preco, estoque } = req.body;
@@ -337,6 +323,9 @@ app.put('/produtos/:codigo', (req, res) => {
   res.json({ mensagem: 'Produto atualizado com sucesso!' });
 });
 
+// ===== ROTAS DELETE =====
+
+// Excluir produto pelo código
 app.delete('/produtos/:codigo', (req, res) => {
   const codigo = req.params.codigo;
 
@@ -349,14 +338,7 @@ app.delete('/produtos/:codigo', (req, res) => {
   res.json({ mensagem: 'Produto excluído com sucesso!' });
 });
 
-// Inicializa servidor
-app.listen(3000, () => {
-  console.log('Servidor rodando em http://localhost:3000');
-});
-// Final da Rota PUT//
-
-//Rota delete// 
-// Rota para excluir usuário pelo id
+// Excluir usuário pelo id
 app.delete('/usuarios/:id', (req, res) => {
   const { id } = req.params;
 
@@ -372,6 +354,7 @@ app.delete('/usuarios/:id', (req, res) => {
   }
 });
 
-// Fim da rota Delete//
-
-
+// ===== INICIALIZA SERVIDOR =====
+app.listen(80, '0.0.0.0', () => {
+  console.log('Servidor rodando em http://0.0.0.0:80');
+});
